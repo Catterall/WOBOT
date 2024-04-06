@@ -99,7 +99,8 @@ class Wobot(commands.Bot):
 
     async def on_ready(self):
         try:
-            await self.tree.sync()
+            pass
+            # await self.tree.sync()
         except discord.errors.NotFound:
             lu.scritical(
                 'Failed to sync tree. Please check the application ID.')

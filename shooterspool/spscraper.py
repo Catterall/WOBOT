@@ -5,7 +5,7 @@ A namespace for handling the webscraping of https://members.shooterspool.net/
 Created & Maintained by K. Catterall
 (XORBit64 @ Discord)
 
-Last Revision: 06/04/2024 01:30 GMT
+Last Revision: 06/04/2024 19:00 GMT
 """
 
 import asyncio
@@ -13,12 +13,15 @@ import httpx
 import consts.request_consts as ru
 from json.decoder import JSONDecodeError
 
+import shooterspool.spcache as spc
+
 
 class SPScraper:
     """A class to handle the scraping of Shooterspool HTML, using async httpx for requests."""
 
     def __init__(self):
         self.client = httpx.AsyncClient(follow_redirects=True)
+        self.scraper_cache = spc.SPCache(300)
 
     async def login(self, email: str, password: str):
         """Initializes self.client by logging into https://members.shooterspool.net"""
@@ -39,6 +42,20 @@ class SPScraper:
         if close_session:
             await self.client.aclose()
 
+    async def get_username_id(self, username: str) -> int | None:
+        """Returns the user ID of a username, or None if the username does not exist."""
+        user_id = await self.scraper_cache.cachedUsernameID(username)
+        if user_id is not None:
+            return user_id
+        url = f'https://members.shooterspool.net/getUsers.php?term={username}'
+        try:
+            r = await self.client.get(url, headers=ru.JSON_HEADERS)
+            user_id = r.json()[0]['value']
+            await self.scraper_cache.cacheUsernameID(username, user_id)
+            return user_id
+        except JSONDecodeError:
+            return None
+    
     async def pg_viewProfile(self, username: str) -> tuple[dict, tuple[str]] | None:
         """Returns a tuple with profile data and HTML page responses for viewing a profile."""
         url = f'https://members.shooterspool.net/getUsers.php?term={username}'
@@ -59,3 +76,28 @@ class SPScraper:
 
         except JSONDecodeError:
             return None
+    
+    async def pg_viewProfile_stats(self, username: str) -> list[dict|list]:
+        """Returns a list of dictionaries containing the stats of a profile for all rules.
+
+        If a rule has no stats, the dictionary will be an empty list instead.
+        """
+        user_id = await self.get_username_id(username)
+        if not user_id:
+            return []
+
+        urls = [f'https://members.shooterspool.net/index.php?r=user/getStats&id={user_id}&rules={i}' for i in range(1, 18)]
+        
+        responses = await asyncio.gather(*[self.client.get(url, headers=ru.TEXT_HTML_HEADERS) for url in urls], return_exceptions=True)
+        json_responses = []
+
+        for response in responses:
+            if isinstance(response, httpx.Response) and response.status_code == 200:
+                try:
+                    json_responses.append(response.json())
+                except JSONDecodeError:
+                    json_responses.append([])
+            else:
+                json_responses.append([])
+
+        return json_responses
